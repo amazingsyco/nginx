@@ -23,7 +23,11 @@ typedef ngx_int_t (*ngx_http_header_handler_pt)(ngx_http_request_t *r,
     ngx_table_elt_t *h, ngx_uint_t offset);
 typedef u_char *(*ngx_http_log_handler_pt)(ngx_http_request_t *r,
     ngx_http_request_t *sr, u_char *buf, size_t len);
+typedef void (*ngx_http_client_body_handler_pt)(ngx_http_request_t *r);
 
+#if (NGX_HTTP_SPDY)
+#include <ngx_http_spdy.h>
+#endif
 
 #include <ngx_http_variables.h>
 #include <ngx_http_request.h>
@@ -33,6 +37,10 @@ typedef u_char *(*ngx_http_log_handler_pt)(ngx_http_request_t *r,
 #include <ngx_http_busy_lock.h>
 #include <ngx_http_script.h>
 #include <ngx_http_core_module.h>
+
+#if (NGX_HTTP_SPDY)
+#include <ngx_http_spdy_module.h>
+#endif
 
 #if (NGX_HTTP_CACHE)
 #include <ngx_http_cache.h>
@@ -78,6 +86,7 @@ int ngx_http_ssl_servername(ngx_ssl_conn_t *ssl_conn, int *ad, void *arg);
 #endif
 
 ngx_int_t ngx_http_parse_request_line(ngx_http_request_t *r, ngx_buf_t *b);
+ngx_int_t ngx_http_parse_uri(ngx_http_request_t *r);
 ngx_int_t ngx_http_parse_complex_uri(ngx_http_request_t *r,
     ngx_uint_t merge_slashes);
 ngx_int_t ngx_http_parse_status_line(ngx_http_request_t *r, ngx_buf_t *b,
@@ -94,6 +103,7 @@ void ngx_http_split_args(ngx_http_request_t *r, ngx_str_t *uri,
     ngx_str_t *args);
 
 
+ngx_int_t ngx_http_process_request_header(ngx_http_request_t *r);
 ngx_int_t ngx_http_find_server_conf(ngx_http_request_t *r);
 void ngx_http_update_location_config(ngx_http_request_t *r);
 void ngx_http_handler(ngx_http_request_t *r);
@@ -101,6 +111,7 @@ void ngx_http_run_posted_requests(ngx_connection_t *c);
 ngx_int_t ngx_http_post_request(ngx_http_request_t *r,
     ngx_http_posted_request_t *pr);
 void ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc);
+void ngx_http_log_request(ngx_http_request_t *r);
 
 void ngx_http_empty_handler(ngx_event_t *wev);
 void ngx_http_request_empty_handler(ngx_http_request_t *r);

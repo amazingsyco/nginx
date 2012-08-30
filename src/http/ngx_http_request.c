@@ -30,7 +30,6 @@ static ngx_int_t ngx_http_process_user_agent(ngx_http_request_t *r,
 static ngx_int_t ngx_http_process_cookie(ngx_http_request_t *r,
     ngx_table_elt_t *h, ngx_uint_t offset);
 
-static ngx_int_t ngx_http_process_request_header(ngx_http_request_t *r);
 static void ngx_http_process_request(ngx_http_request_t *r);
 static ssize_t ngx_http_validate_host(ngx_http_request_t *r, u_char **host,
     size_t len, ngx_uint_t alloc);
@@ -52,7 +51,6 @@ static void ngx_http_lingering_close_handler(ngx_event_t *ev);
 static ngx_int_t ngx_http_post_action(ngx_http_request_t *r);
 static void ngx_http_close_request(ngx_http_request_t *r, ngx_int_t error);
 static void ngx_http_free_request(ngx_http_request_t *r, ngx_int_t error);
-static void ngx_http_log_request(ngx_http_request_t *r);
 static void ngx_http_close_connection(ngx_connection_t *c);
 
 static u_char *ngx_http_log_error(ngx_log_t *log, u_char *buf, size_t len);
@@ -423,6 +421,12 @@ ngx_http_init_request(ngx_event_t *rev)
                 return;
             }
 
+#if (NGX_HTTP_SPDY)
+            if (addr_conf->spdy) {
+                r->spdy_stream = (void *) 1; //FIXME
+            }
+#endif
+
             if (ngx_ssl_create_connection(&sscf->ssl, c, NGX_SSL_BUFFER)
                 != NGX_OK)
             {
@@ -596,6 +600,10 @@ ngx_http_ssl_handshake(ngx_event_t *rev)
         }
     }
 
+#if (NGX_HTTP_SPDY)
+    r->spdy_stream = NULL; //FIXME
+#endif
+
     c->log->action = "reading client request line";
 
     rev->handler = ngx_http_process_request_line;
@@ -607,6 +615,12 @@ static void
 ngx_http_ssl_handshake_handler(ngx_connection_t *c)
 {
     ngx_http_request_t  *r;
+
+    r = c->data;
+
+#if (NGX_HTTP_SPDY)
+    r->spdy_stream = NULL; //FIXME
+#endif
 
     if (c->ssl->handshaked) {
 
@@ -620,6 +634,34 @@ ngx_http_ssl_handshake_handler(ngx_connection_t *c)
 
         c->ssl->no_wait_shutdown = 1;
 
+#if (NGX_HTTP_SPDY)
+        {
+        unsigned             len;
+        const u_char        *data;
+        ngx_http_log_ctx_t  *ctx;
+
+        SSL_get0_next_proto_negotiated(c->ssl->connection, &data, &len);
+
+        if (len == sizeof("spdy/2") - 1
+            && ngx_memcmp(data, "spdy/2", sizeof("spdy/2") - 1) == 0)
+        {
+
+#if (NGX_STAT_STUB)
+            (void) ngx_atomic_fetch_add(ngx_stat_reading, -1);
+            (void) ngx_atomic_fetch_add(ngx_stat_requests, -1);
+#endif
+            /* FIXME */
+            ctx = c->log->data;
+            ctx->request = NULL;
+            ngx_destroy_pool(r->pool); 
+            ngx_pfree(c->pool, r);
+            ngx_pfree(c->pool, c->buffer->start);
+            ngx_http_init_spdy(c->read);
+            return;
+        }
+        }
+#endif
+
         c->log->action = "reading client request line";
 
         c->read->handler = ngx_http_process_request_line;
@@ -629,8 +671,6 @@ ngx_http_ssl_handshake_handler(ngx_connection_t *c)
 
         return;
     }
-
-    r = c->data;
 
     ngx_http_close_request(r, NGX_HTTP_BAD_REQUEST);
 
@@ -978,7 +1018,7 @@ ngx_http_process_request_line(ngx_event_t *rev)
 }
 
 
-static void
+void
 ngx_http_process_request_headers(ngx_event_t *rev)
 {
     u_char                     *p;
@@ -1548,7 +1588,7 @@ ngx_http_process_cookie(ngx_http_request_t *r, ngx_table_elt_t *h,
 }
 
 
-static ngx_int_t
+ngx_int_t
 ngx_http_process_request_header(ngx_http_request_t *r)
 {
     if (ngx_http_find_virtual_server(r, r->headers_in.server.data,
@@ -1940,6 +1980,11 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
     ngx_connection_t          *c;
     ngx_http_request_t        *pr;
     ngx_http_core_loc_conf_t  *clcf;
+
+    if (r->spdy_stream) {
+        ngx_http_spdy_finalize_request(r, rc);
+        return;
+    }
 
     c = r->connection;
 
@@ -3074,7 +3119,7 @@ ngx_http_free_request(ngx_http_request_t *r, ngx_int_t rc)
 }
 
 
-static void
+void
 ngx_http_log_request(ngx_http_request_t *r)
 {
     ngx_uint_t                  i, n;

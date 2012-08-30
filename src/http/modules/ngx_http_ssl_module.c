@@ -224,6 +224,31 @@ static ngx_http_variable_t  ngx_http_ssl_vars[] = {
 static ngx_str_t ngx_http_ssl_sess_id_ctx = ngx_string("HTTP");
 
 
+#if (NGX_HTTP_SPDY)
+static int
+ngx_http_ssl_npn_advertised(ngx_ssl_conn_t *ssl, const unsigned char **out,
+    unsigned int *outlen, void *arg)
+{
+    ngx_connection_t    *c;
+    ngx_http_request_t  *r;
+
+    c = ngx_ssl_get_connection(ssl);
+    r = c->data;
+
+    if (r->spdy_stream == NULL) {
+        return SSL_TLSEXT_ERR_NOACK;
+    }
+
+    ngx_log_error(NGX_LOG_INFO, c->log, 0, "SSL NPN ADVERT");
+
+    *out = (unsigned char *) "\006spdy/2\010http/1.1";
+    *outlen = sizeof("\006spdy/2\010http/1.1") - 1;
+
+    return SSL_TLSEXT_ERR_OK;
+}
+#endif
+
+
 static ngx_int_t
 ngx_http_ssl_static_variable(ngx_http_request_t *r,
     ngx_http_variable_value_t *v, uintptr_t data)
@@ -438,6 +463,11 @@ ngx_http_ssl_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
             "therefore SNI is not available");
     }
 
+#endif
+
+#if (NGX_HTTP_SPDY)
+    SSL_CTX_set_next_protos_advertised_cb(conf->ssl.ctx,
+                                          ngx_http_ssl_npn_advertised, NULL);
 #endif
 
     cln = ngx_pool_cleanup_add(cf->pool, 0);

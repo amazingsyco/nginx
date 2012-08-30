@@ -56,7 +56,8 @@ typedef struct {
 } ngx_http_limit_req_conf_t;
 
 
-static void ngx_http_limit_req_delay(ngx_http_request_t *r);
+static void ngx_http_limit_req_delay(ngx_event_t *ev);
+static void ngx_http_limit_req_delay_cleanup(void *data);
 static ngx_int_t ngx_http_limit_req_lookup(ngx_http_limit_req_limit_t *limit,
     ngx_uint_t hash, u_char *data, size_t len, ngx_uint_t *ep,
     ngx_uint_t account);
@@ -150,6 +151,8 @@ ngx_http_limit_req_handler(ngx_http_request_t *r)
     ngx_int_t                    rc;
     ngx_uint_t                   n, excess;
     ngx_msec_t                   delay;
+    ngx_event_t                 *ev;
+    ngx_http_cleanup_t          *cln;
     ngx_http_variable_value_t   *vv;
     ngx_http_limit_req_ctx_t    *ctx;
     ngx_http_limit_req_conf_t   *lrcf;
@@ -264,48 +267,54 @@ ngx_http_limit_req_handler(ngx_http_request_t *r)
                   "delaying request, excess: %ui.%03ui, by zone \"%V\"",
                   excess / 1000, excess % 1000, &limit->shm_zone->shm.name);
 
-    if (ngx_handle_read_event(r->connection->read, 0) != NGX_OK) {
+    cln = ngx_http_cleanup_add(r, sizeof(ngx_event_t));
+    if (cln == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
+    cln->handler = ngx_http_limit_req_delay_cleanup;
+
+    ev = cln->data;
+
+    ngx_memzero(ev, sizeof(ngx_event_t));
+
+    ev->handler = ngx_http_limit_req_delay;
+    ev->data = r;
+    ev->log = r->connection->log;
+
     r->read_event_handler = ngx_http_test_reading;
-    r->write_event_handler = ngx_http_limit_req_delay;
-    ngx_add_timer(r->connection->write, delay);
+    r->write_event_handler = ngx_http_request_empty_handler;
+
+    ngx_add_timer(ev, delay);
 
     return NGX_AGAIN;
 }
 
 
 static void
-ngx_http_limit_req_delay(ngx_http_request_t *r)
+ngx_http_limit_req_delay(ngx_event_t *ev)
 {
-    ngx_event_t  *wev;
+    ngx_http_request_t  *r;
 
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "limit_req delay");
+    r = ev->data;
 
-    wev = r->connection->write;
-
-    if (!wev->timedout) {
-
-        if (ngx_handle_write_event(wev, 0) != NGX_OK) {
-            ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
-        }
-
-        return;
-    }
-
-    wev->timedout = 0;
-
-    if (ngx_handle_read_event(r->connection->read, 0) != NGX_OK) {
-        ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
-        return;
-    }
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, ev->log, 0, "limit_req delay");
 
     r->read_event_handler = ngx_http_block_reading;
     r->write_event_handler = ngx_http_core_run_phases;
 
     ngx_http_core_run_phases(r);
+}
+
+
+static void
+ngx_http_limit_req_delay_cleanup(void *data)
+{
+    ngx_event_t *ev = data;
+
+    if (ev->timer_set) {
+        ngx_del_timer(ev);
+    }
 }
 
 

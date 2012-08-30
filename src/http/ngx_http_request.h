@@ -269,8 +269,6 @@ typedef struct {
 } ngx_http_headers_out_t;
 
 
-typedef void (*ngx_http_client_body_handler_pt)(ngx_http_request_t *r);
-
 typedef struct {
     ngx_temp_file_t                  *temp_file;
     ngx_chain_t                      *bufs;
@@ -422,6 +420,9 @@ struct ngx_http_request_s {
     ngx_uint_t                        err_status;
 
     ngx_http_connection_t            *http_connection;
+#if (NGX_HTTP_SPDY)
+    ngx_http_spdy_stream_t           *spdy_stream;
+#endif
 
     ngx_http_log_handler_pt           log_handler;
 
